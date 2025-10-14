@@ -1,55 +1,74 @@
 <?php
 require_once __DIR__ . '/db.php';
 
-// Loggen von Loginversuchen (Raum wird nicht mehr berücksichtigt)
-function log_access($PersonalNr, $Ergebnis = 'FAIL') {
+/**
+ * log_access
+ * Loggt einen Zugang (GUI oder Raum). Wenn $raumNr null, wird Raum nicht in INSERT geschrieben.
+ *
+ * @param int|null $PersonalNr
+ * @param string $Ergebnis
+ * @param int|null $RaumNr
+ */
+function log_access($PersonalNr, $Ergebnis = 'FAIL', $RaumNr = null) {
     global $conn;
+
     $datum = date('Y-m-d');
     $uhrzeit = date('H:i:s');
-    $stmt = $conn->prepare("
-        INSERT INTO Logs (PersonalNr, Datum, Uhrzeit, Ergebnis)
-        VALUES (?, ?, ?, ?)
-    ");
-    if (!$stmt) die("Prepare fehlgeschlagen: " . $conn->error);
-    $stmt->bind_param("isss", $PersonalNr, $datum, $uhrzeit, $Ergebnis);
+
+    if ($RaumNr === null) {
+        $stmt = $conn->prepare("
+            INSERT INTO Logs (PersonalNr, Datum, Uhrzeit, Ergebnis)
+            VALUES (?, ?, ?, ?)
+        ");
+        if (!$stmt) die("Prepare fehlgeschlagen: " . $conn->error);
+        $stmt->bind_param("isss", $PersonalNr, $datum, $uhrzeit, $Ergebnis);
+    } else {
+        $stmt = $conn->prepare("
+            INSERT INTO Logs (PersonalNr, RaumNr, Datum, Uhrzeit, Ergebnis)
+            VALUES (?, ?, ?, ?, ?)
+        ");
+        if (!$stmt) die("Prepare fehlgeschlagen: " . $conn->error);
+        $stmt->bind_param("iisss", $PersonalNr, $RaumNr, $datum, $uhrzeit, $Ergebnis);
+    }
+
     $stmt->execute();
     $stmt->close();
 }
 
+/**
+ * attempt_login
+ * Prüft Login anhand Vorname + PIN (PIN liegt in Credentials).
+ * Liefert Benutzerdaten zurück oder false.
+ *
+ * @param string $vorname
+ * @param string $pin
+ * @return array|false
+ */
 function attempt_login($vorname, $pin) {
     global $conn;
 
+    // Wir suchen Benutzer nach Vorname und prüfen PIN in Credentials
     $stmt = $conn->prepare("
-        SELECT b.PersonalNr, b.Vorname, b.Name, b.Rolle, c.PIN
+        SELECT b.PersonalNr, b.Vorname, b.Name, b.Rolle
         FROM Benutzer b
-        INNER JOIN Credentials c ON b.PersonalNr = c.PersonalNr
-        WHERE b.Vorname = ?
+        JOIN Credentials c ON b.PersonalNr = c.PersonalNr
+        WHERE b.Vorname = ? AND c.PIN = ?
+        LIMIT 1
     ");
-    $stmt->bind_param("s", $vorname);
+    if (!$stmt) die("Prepare fehlgeschlagen: " . $conn->error);
+
+    $stmt->bind_param("ss", $vorname, $pin);
     $stmt->execute();
-    $result = $stmt->get_result();
+    $res = $stmt->get_result();
 
-    if ($row = $result->fetch_assoc()) {
-        // PIN prüfen
-        if ($pin !== $row['PIN']) {
-            log_access($row['PersonalNr'], 'FAIL');
-            return false;
-        }
-
-        // Rolle prüfen: nur Admin = SUCCESS
-        if ($row['Rolle'] !== 'adm') {
-            log_access($row['PersonalNr'], 'FAIL');
-            return false;
-        }
-
-        // Alles ok → Admin darf einloggen
-        log_access($row['PersonalNr'], 'SUCCESS');
+    if ($row = $res->fetch_assoc()) {
+        // erfolgreichen Login loggen (GUI-Login wird in index.php mit RaumNr=0 geloggt)
+        // Wir loggen hier nicht automatisch, da Aufrufer entscheiden soll (z.B. GUI vs RFID).
+        $stmt->close();
         return $row;
     }
 
-    // Benutzer nicht gefunden
-    log_access(null, 'FAIL');
+    $stmt->close();
     return false;
 }
-
-
+?>

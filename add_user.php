@@ -1,57 +1,66 @@
 <?php
 session_start();
 require_once __DIR__ . '/db.php';
+header('Content-Type: text/plain; charset=utf-8');
 
 // Nur Admin darf zugreifen
-if ($_SESSION['Rolle'] !== 'adm') {
-    header("Location: dashboard.php");
+if (!isset($_SESSION['PersonalNr']) || $_SESSION['Rolle'] !== 'adm') {
+    echo "❌ Zugriff verweigert!";
     exit;
 }
 
-$msg = '';
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $vorname = trim($_POST['vorname']);
-    $name = trim($_POST['name']);
-    $pin = trim($_POST['pin']);
-
-    // 1️⃣ Benutzer anlegen
-    $stmt = $conn->prepare("INSERT INTO Benutzer (Name, Vorname, Rolle) VALUES (?, ?, 'usr')");
-    $stmt->bind_param("ss", $name, $vorname);
-    $stmt->execute();
-    $personalNr = $conn->insert_id;
-    $stmt->close();
-
-    // 2️⃣ Credentials anlegen
-    $stmt = $conn->prepare("INSERT INTO Credentials (PersonalNr, PIN) VALUES (?, ?)");
-    $stmt->bind_param("is", $personalNr, $pin);
-    $ok = $stmt->execute();
-    $stmt->close();
-
-    $msg = $ok ? "✅ Benutzer erfolgreich angelegt!" : "❌ Fehler beim Anlegen!";
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    echo "❌ Ungültige Anfrage!";
+    exit;
 }
-?>
-<!DOCTYPE html>
-<html lang="de">
-<head>
-    <meta charset="UTF-8">
-    <title>Benutzer anlegen – Sentinel</title>
-    <link rel="stylesheet" href="assets/style.css">
-</head>
-<body>
-<div class="form-container">
-    <h2>👤 Neuen Benutzer anlegen</h2>
-    <?php if ($msg): ?><div class="info"><?= htmlspecialchars($msg) ?></div><?php endif; ?>
-    <form method="post">
-        <label>Vorname</label>
-        <input type="text" name="vorname" required>
-        <label>Nachname</label>
-        <input type="text" name="name" required>
-        <label>PIN</label>
-        <input type="text" name="pin" required>
-        <button type="submit">Benutzer anlegen</button>
-    </form>
-    <a href="dashboard.php">⬅ Zurück</a>
-</div>
-</body>
-</html>
+
+$personalNr = trim($_POST['personalnr'] ?? '');
+$vorname = trim($_POST['vorname'] ?? '');
+$name = trim($_POST['name'] ?? '');
+$pin = trim($_POST['pin'] ?? '');
+$rolle = trim($_POST['rolle'] ?? '');
+$fileloc = trim($_POST['fileloc'] ?? '');
+
+if ($personalNr === '' || !is_numeric($personalNr)) {
+    echo "❌ Ungültige Personalnummer!";
+    exit;
+}
+
+$personalNr = intval($personalNr);
+
+// Prüfen, ob Benutzer bereits existiert
+$check = $conn->prepare("SELECT COUNT(*) AS cnt FROM Benutzer WHERE PersonalNr = ?");
+$check->bind_param("i", $personalNr);
+$check->execute();
+$res = $check->get_result()->fetch_assoc();
+$check->close();
+
+if ($res['cnt'] > 0) {
+    echo "❌ Diese Personalnummer existiert bereits!";
+    exit;
+}
+
+// Benutzer anlegen
+$stmt = $conn->prepare("INSERT INTO Benutzer (PersonalNr, Name, Vorname, Rolle) VALUES (?, ?, ?, ?)");
+$stmt->bind_param("isss", $personalNr, $name, $vorname, $rolle);
+$ok = $stmt->execute();
+$stmt->close();
+
+if (!$ok) {
+    echo "❌ Fehler beim Anlegen des Benutzers.";
+    exit;
+}
+
+// Zugangsdaten (PIN) anlegen
+$stmt = $conn->prepare("INSERT INTO Credentials (PersonalNr, PIN) VALUES (?, ?)");
+$stmt->bind_param("is", $personalNr, $pin);
+$ok2 = $stmt->execute();
+$stmt->close();
+
+if (!$ok2) {
+    echo "⚠️ Benutzer angelegt, aber Fehler beim Anlegen der Zugangsdaten.";
+    exit;
+}
+
+echo "✅ Benutzer erfolgreich angelegt!";
+exit;
